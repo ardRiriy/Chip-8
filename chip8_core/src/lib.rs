@@ -1,3 +1,5 @@
+use std::{panic, process::exit, u8};
+
 pub const SCREEN_WIDTH: usize = 64;
 pub const SCREEN_HEIGHT: usize = 32;
 const RAM_SIZE: usize = 4096;
@@ -44,19 +46,46 @@ impl Emu {
             (a << 8) | b
         };
 
+        //println!("PC = {:X}", self.pc);
+        //println!("opcode = {:X}", opcode);
         self.pc += 2;
 
         match opcode & 0xF000 {
             0x0000 => {
-                if opcode == 0x00e0 {
-                    self.screen_clear();
-                } else {
-                    unimplemented!("op code {} is not implement decode and execute", opcode)
+                match opcode {
+                    0x00E0 => {
+                        self.screen_clear();
+                    }
+                    0x0000 => { /* NOP */ }
+                    _ => {
+                        panic!("opcode {:X} is not exists", opcode)
+                    }
                 }
             }
             0x1000 => {
                 let addr = opcode & 0x0FFF;
                 self.pc = addr;
+            }
+            0x3000 => {
+                let x = (opcode & 0x0F00) >> 8;
+                let target = opcode & 0x00FF;
+                if target as u8 == self.v_reg[x as usize] {
+                    self.pc += 2;
+                }
+            }
+            0x4000 => {
+                let x = (opcode & 0x0F00) >> 8;
+                let target = opcode & 0x00FF;
+                if target as u8 != self.v_reg[x as usize] {
+                    self.pc += 2;
+                }
+            }
+            0x5000 => {
+                let x = (opcode & 0x0F00) >> 8;
+                let y = (opcode & 0x00F0) >> 4;
+                if self.v_reg[x as usize] == self.v_reg[y as usize] {
+                    self.pc += 2;
+                }
             }
             0x6000 => {
                 let x = (opcode & 0x0F00) >> 8;
@@ -67,6 +96,66 @@ impl Emu {
                 let reg = (opcode & 0x0F00) >> 8;
                 let val = opcode & 0x00FF;
                 self.v_reg[reg as usize] += val as u8;
+            }
+            0x8000 => {
+                let x = ((opcode & 0x0F00) >> 8) as usize;
+                let y = ((opcode & 0x00F0) >> 4) as usize;
+                match opcode & 0x000F {
+                    0x0 => {
+                        self.v_reg[x] = self.v_reg[y];
+                    }
+                    0x1 => {
+                        self.v_reg[x] |= self.v_reg[y];
+                    }
+                    0x2 => {
+                        self.v_reg[x] &= self.v_reg[y];
+                    }
+                    0x3 => {
+                        self.v_reg[x] ^= self.v_reg[y];
+                    }
+                    0x4 => {
+                        let a = self.v_reg[x];
+                        let b = self.v_reg[y];
+                        let (val, of) = a.overflowing_add(b);
+                        self.v_reg[x] = val;
+                        self.v_reg[0xf] = if of { 1 } else { 0 };
+                    }
+                    0x5 => {
+                        if self.v_reg[x] >= self.v_reg[y] {
+                            self.v_reg[0xf] = 1;
+                        } else {
+                            self.v_reg[0xf] = 0;
+                        }
+
+                        self.v_reg[x] = self.v_reg[x].overflowing_sub(self.v_reg[y]).0;
+                    }
+                    0x6 => {
+                        self.v_reg[0xf] = self.v_reg[x] & 1;
+                        self.v_reg[x] >>= 1;
+                    }
+                    0x7 => {
+                        if self.v_reg[y] >= self.v_reg[x] {
+                            self.v_reg[0xf] = 1;
+                        } else {
+                            self.v_reg[0xf] = 0;
+                        }
+                        self.v_reg[x] = self.v_reg[y].overflowing_sub(self.v_reg[x]).0;
+                    }
+                    0xE => {
+                        self.v_reg[0xf] = (self.v_reg[x] >> 7) & 1;
+                        self.v_reg[x] <<= 1;
+                    }
+                    _ => {
+                        unreachable!("opcode {:X} is not exists.", opcode)
+                    }
+                }
+            }
+            0x9000 => {
+                let x = (opcode & 0x0F00) >> 8;
+                let y = (opcode & 0x00F0) >> 4;
+                if self.v_reg[x as usize] != self.v_reg[y as usize] {
+                    self.pc += 2;
+                }
             }
             0xA000 => {
                 let val = opcode & 0x0FFF;
@@ -96,6 +185,29 @@ impl Emu {
                                 self.v_reg[0xf] = 1;
                             }
                         }
+                    }
+                }
+                self.display();
+            }
+            0xF000 => {
+                let x = ((opcode & 0x0F00) >> 8) as usize;
+                match opcode & 0x00FF {
+                    0x1E => {
+                        self.i_reg += self.v_reg[x] as u16;
+                    }
+                    0x55 => {
+                        for i in 0..=x {
+                            self.ram[self.i_reg as usize + i] = self.v_reg[i];
+                        }
+                    }
+                    0x65 => {
+                        for i in 0..=x {
+                            self.v_reg[i] = self.ram[self.i_reg as usize + i];
+                        }
+                    }
+
+                    _ => {
+                        unimplemented!("op code {:X} is not implement decode and execute", opcode)
                     }
                 }
             }
@@ -140,5 +252,6 @@ impl Emu {
         for i in 0..SCREEN_WIDTH * SCREEN_HEIGHT {
             self.screen[i] = false;
         }
+        self.display();
     }
 }

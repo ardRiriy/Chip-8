@@ -13,7 +13,7 @@ fn main() {
     let filename = if args.len() > 1 {
         &args[1]
     } else {
-        "../examples/IBM Logo.ch8"
+        "examples/Sierpinski [Sergey Naydenov, 2010].ch8"
     };
 
     let mut file = File::open(filename).expect("ROM file not found");
@@ -29,7 +29,6 @@ fn main() {
 
     loop {
         emu.fetch();
-        emu.display();
         thread::sleep(Duration::from_millis(16));
     }
 }

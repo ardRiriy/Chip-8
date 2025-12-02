@@ -1,8 +1,6 @@
 use std::env;
 use std::fs::File;
 use std::io::Read;
-use std::thread;
-use std::time::Duration;
 
 use chip8_core::Emu;
 
@@ -25,10 +23,5 @@ fn main() {
     println!("ROM loaded: {} bytes", buffer.len());
     println!("Press Ctrl+C to exit.");
 
-    print!("\x1B[2J");
-
-    loop {
-        emu.fetch();
-        thread::sleep(Duration::from_millis(16));
-    }
+    emu.execute();
 }

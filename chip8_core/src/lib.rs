@@ -1,4 +1,12 @@
-use std::{panic, process::exit, u8};
+use std::{
+    panic,
+    process::exit,
+    thread::sleep,
+    time::{Duration, Instant},
+    u8,
+};
+
+use rand::{Rng, rng};
 
 pub const SCREEN_WIDTH: usize = 64;
 pub const SCREEN_HEIGHT: usize = 32;
@@ -64,7 +72,48 @@ impl Emu {
         }
     }
 
-    pub fn fetch(&mut self) {
+    fn push(&mut self, value: u16) {
+        self.stack[self.stack_pointer as usize] = value;
+        self.stack_pointer += 1;
+    }
+
+    fn pop(&mut self) -> u16 {
+        self.stack_pointer -= 1;
+        self.stack[self.stack_pointer as usize]
+    }
+
+    pub fn execute(&mut self) {
+        static FPS: u64 = 60;
+        let frame_duration = Duration::from_micros(1_000_000 / FPS);
+        let instructions_per_frame = 500 / FPS;
+
+        loop {
+            let frame_start = Instant::now();
+            for _ in 0..instructions_per_frame {
+                self.fetch();
+            }
+
+            self.update_timers();
+
+            self.display();
+
+            let elapsed = frame_start.elapsed();
+            if elapsed < frame_duration {
+                sleep(frame_duration - elapsed);
+            }
+        }
+    }
+
+    fn update_timers(&mut self) {
+        if self.delay_timer > 0 {
+            self.delay_timer -= 1;
+        }
+        if self.sound_timer > 0 {
+            self.sound_timer -= 1;
+        }
+    }
+
+    fn fetch(&mut self) {
         let opcode = {
             let a = self.ram[self.pc as usize] as u16;
             let b = self.ram[self.pc as usize + 1] as u16;
@@ -78,10 +127,13 @@ impl Emu {
         match opcode & 0xF000 {
             0x0000 => {
                 match opcode {
+                    0x0000 => { /* NOP */ }
                     0x00E0 => {
                         self.screen_clear();
                     }
-                    0x0000 => { /* NOP */ }
+                    0x00EE => {
+                        self.pc = self.pop();
+                    }
                     _ => {
                         panic!("opcode {:X} is not exists", opcode)
                     }
@@ -89,6 +141,11 @@ impl Emu {
             }
             0x1000 => {
                 let addr = opcode & 0x0FFF;
+                self.pc = addr;
+            }
+            0x2000 => {
+                let addr = opcode & 0x0FFF;
+                self.push(self.pc);
                 self.pc = addr;
             }
             0x3000 => {
@@ -120,7 +177,7 @@ impl Emu {
             0x7000 => {
                 let reg = (opcode & 0x0F00) >> 8;
                 let val = opcode & 0x00FF;
-                self.v_reg[reg as usize] += val as u8;
+                self.v_reg[reg as usize] = self.v_reg[reg as usize].wrapping_add(val as u8);
             }
             0x8000 => {
                 let x = ((opcode & 0x0F00) >> 8) as usize;
@@ -186,6 +243,12 @@ impl Emu {
                 let val = opcode & 0x0FFF;
                 self.i_reg = val;
             }
+            0xC000 => {
+                let x = (opcode & 0x0F00) >> 8;
+                let mask = opcode & 0x00FF;
+                let mut rng = rng();
+                self.v_reg[x as usize] = (rng.random_range(0..256) & mask) as u8;
+            }
             0xD000 => {
                 self.v_reg[0xf] = 0;
 
@@ -212,13 +275,15 @@ impl Emu {
                         }
                     }
                 }
-                self.display();
             }
             0xF000 => {
                 let x = ((opcode & 0x0F00) >> 8) as usize;
                 match opcode & 0x00FF {
                     0x1E => {
                         self.i_reg += self.v_reg[x] as u16;
+                    }
+                    0x15 => {
+                        self.delay_timer = self.v_reg[x];
                     }
                     0x29 => {
                         let val = self.v_reg[x];
@@ -265,7 +330,7 @@ impl Emu {
         print!("\x1B[1;1H");
 
         // 上下の枠
-        println!("┌{}┐", "─".repeat(SCREEN_WIDTH));
+        println!("┌{}┐", "─".repeat(SCREEN_WIDTH * 2));
 
         for y in 0..SCREEN_HEIGHT {
             // print!("{:2}: │", y);
@@ -273,21 +338,20 @@ impl Emu {
             for x in 0..SCREEN_WIDTH {
                 let index = y * SCREEN_WIDTH + x;
                 if self.screen[index] {
-                    print!("█");
+                    print!("██");
                 } else {
-                    print!(" ");
+                    print!("  ");
                 }
             }
             println!("│");
         }
 
-        println!("└{}┘", "─".repeat(SCREEN_WIDTH));
+        println!("└{}┘", "─".repeat(SCREEN_WIDTH * 2));
     }
 
     fn screen_clear(&mut self) {
         for i in 0..SCREEN_WIDTH * SCREEN_HEIGHT {
             self.screen[i] = false;
         }
-        self.display();
     }
 }

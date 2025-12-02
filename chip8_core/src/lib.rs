@@ -7,6 +7,26 @@ const NUM_REGS: usize = 16;
 const STACK_SIZE: usize = 16;
 const NUM_KEYS: usize = 16;
 const START_ADDR: u16 = 0x200;
+const FONT_BASE_ADDR: usize = 0xD00;
+const FONTSET_SIZE: usize = 80;
+const FONTSET: [u8; FONTSET_SIZE] = [
+    0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
+    0x20, 0x60, 0x20, 0x20, 0x70, // 1
+    0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
+    0xF0, 0x10, 0xF0, 0x10, 0xF0, // 3
+    0x90, 0x90, 0xF0, 0x10, 0x10, // 4
+    0xF0, 0x80, 0xF0, 0x10, 0xF0, // 5
+    0xF0, 0x80, 0xF0, 0x90, 0xF0, // 6
+    0xF0, 0x10, 0x20, 0x40, 0x40, // 7
+    0xF0, 0x90, 0xF0, 0x90, 0xF0, // 8
+    0xF0, 0x90, 0xF0, 0x10, 0xF0, // 9
+    0xF0, 0x90, 0xF0, 0x90, 0x90, // A
+    0xE0, 0x90, 0xE0, 0x90, 0xE0, // B
+    0xF0, 0x80, 0x80, 0x80, 0xF0, // C
+    0xE0, 0x90, 0x90, 0x90, 0xE0, // D
+    0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
+    0xF0, 0x80, 0xF0, 0x80, 0x80, // F
+];
 
 pub struct Emu {
     pc: u16,
@@ -25,9 +45,14 @@ pub struct Emu {
 
 impl Emu {
     pub fn new() -> Self {
+        let mut ram = [0; RAM_SIZE];
+        for i in 0..FONTSET_SIZE {
+            ram[FONT_BASE_ADDR + i] = FONTSET[i];
+        }
+
         Self {
             pc: START_ADDR,
-            ram: [0; RAM_SIZE],
+            ram,
             screen: [false; SCREEN_WIDTH * SCREEN_HEIGHT],
             v_reg: [0; NUM_REGS],
             i_reg: 0,
@@ -194,6 +219,17 @@ impl Emu {
                 match opcode & 0x00FF {
                     0x1E => {
                         self.i_reg += self.v_reg[x] as u16;
+                    }
+                    0x29 => {
+                        let val = self.v_reg[x];
+                        self.i_reg = (FONT_BASE_ADDR + val as usize * 5) as u16;
+                    }
+                    0x33 => {
+                        let mut val = self.v_reg[x];
+                        for i in (0..3).rev() {
+                            self.ram[self.i_reg as usize + i] = val % 10;
+                            val /= 10;
+                        }
                     }
                     0x55 => {
                         for i in 0..=x {

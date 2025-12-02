@@ -1,11 +1,6 @@
-use std::{
-    panic,
-    process::exit,
-    thread::sleep,
-    time::{Duration, Instant},
-    u8,
-};
+use std::{panic, u8};
 
+use crossterm::event::{Event, KeyCode, KeyEventKind, read};
 use rand::{Rng, rng};
 
 pub const SCREEN_WIDTH: usize = 64;
@@ -39,13 +34,13 @@ const FONTSET: [u8; FONTSET_SIZE] = [
 pub struct Emu {
     pc: u16,
     ram: [u8; RAM_SIZE],
-    screen: [bool; SCREEN_WIDTH * SCREEN_HEIGHT],
+    pub screen: [bool; SCREEN_WIDTH * SCREEN_HEIGHT],
     v_reg: [u8; NUM_REGS],
     i_reg: u16,
 
     stack_pointer: u16,
     stack: [u16; STACK_SIZE],
-    keys: [bool; NUM_KEYS],
+    pub keys: [bool; NUM_KEYS],
 
     delay_timer: u8,
     sound_timer: u8,
@@ -82,29 +77,7 @@ impl Emu {
         self.stack[self.stack_pointer as usize]
     }
 
-    pub fn execute(&mut self) {
-        static FPS: u64 = 60;
-        let frame_duration = Duration::from_micros(1_000_000 / FPS);
-        let instructions_per_frame = 500 / FPS;
-
-        loop {
-            let frame_start = Instant::now();
-            for _ in 0..instructions_per_frame {
-                self.fetch();
-            }
-
-            self.update_timers();
-
-            self.display();
-
-            let elapsed = frame_start.elapsed();
-            if elapsed < frame_duration {
-                sleep(frame_duration - elapsed);
-            }
-        }
-    }
-
-    fn update_timers(&mut self) {
+    pub fn update_timers(&mut self) {
         if self.delay_timer > 0 {
             self.delay_timer -= 1;
         }
@@ -113,7 +86,7 @@ impl Emu {
         }
     }
 
-    fn fetch(&mut self) {
+    pub fn fetch(&mut self) -> Result<(), ()> {
         let opcode = {
             let a = self.ram[self.pc as usize] as u16;
             let b = self.ram[self.pc as usize + 1] as u16;
@@ -243,6 +216,9 @@ impl Emu {
                 let val = opcode & 0x0FFF;
                 self.i_reg = val;
             }
+            0xB000 => {
+                self.pc = self.v_reg[0] as u16 + opcode & 0x0FFF;
+            }
             0xC000 => {
                 let x = (opcode & 0x0F00) >> 8;
                 let mask = opcode & 0x00FF;
@@ -276,14 +252,73 @@ impl Emu {
                     }
                 }
             }
+            0xE000 => {
+                let x = ((opcode & 0x0F00) >> 8) as usize;
+                match opcode & 0x00FF {
+                    0x9E => {
+                        if self.keys[self.v_reg[x] as usize] {
+                            self.pc += 2;
+                        }
+                    }
+                    0xA1 => {
+                        if !self.keys[self.v_reg[x] as usize] {
+                            self.pc += 2;
+                        }
+                    }
+                    _ => {
+                        panic!("op code {:X} can not decode and execute", opcode)
+                    }
+                }
+            }
             0xF000 => {
                 let x = ((opcode & 0x0F00) >> 8) as usize;
                 match opcode & 0x00FF {
-                    0x1E => {
-                        self.i_reg += self.v_reg[x] as u16;
+                    0x07 => {
+                        self.v_reg[x] = self.delay_timer;
                     }
+                    0x0A => loop {
+                        if let Ok(Event::Key(key_event)) = read() {
+                            if key_event.kind != KeyEventKind::Press {
+                                continue;
+                            }
+
+                            let key = match key_event.code {
+                                KeyCode::Char('1') => 0x1,
+                                KeyCode::Char('2') => 0x2,
+                                KeyCode::Char('3') => 0x3,
+                                KeyCode::Char('4') => 0xC,
+
+                                KeyCode::Char('q') => 0x4,
+                                KeyCode::Char('w') => 0x5,
+                                KeyCode::Char('e') => 0x6,
+                                KeyCode::Char('r') => 0xD,
+
+                                KeyCode::Char('a') => 0x7,
+                                KeyCode::Char('s') => 0x8,
+                                KeyCode::Char('d') => 0x9,
+                                KeyCode::Char('f') => 0xE,
+
+                                KeyCode::Char('z') => 0xA,
+                                KeyCode::Char('x') => 0x0,
+                                KeyCode::Char('c') => 0xB,
+                                KeyCode::Char('v') => 0xF,
+
+                                KeyCode::Esc => return Err(()),
+
+                                _ => continue,
+                            };
+                            self.v_reg[x] = key;
+                            break;
+                        }
+                    },
                     0x15 => {
                         self.delay_timer = self.v_reg[x];
+                    }
+                    0x18 => {
+                        self.sound_timer = self.v_reg[x];
+                    }
+                    0x1E => {
+                        self.i_reg += self.v_reg[x] as u16;
                     }
                     0x29 => {
                         let val = self.v_reg[x];
@@ -306,16 +341,16 @@ impl Emu {
                             self.v_reg[i] = self.ram[self.i_reg as usize + i];
                         }
                     }
-
                     _ => {
-                        unimplemented!("op code {:X} is not implement decode and execute", opcode)
+                        panic!("op code {:X} can not decode and execute", opcode)
                     }
                 }
             }
             _ => {
-                unimplemented!("op code {:X} is not implement decode and execute", opcode)
+                panic!("op code {:X} can not decode and execute", opcode)
             }
         }
+        Ok(())
     }
 
     pub fn load_rom(&mut self, buffer: &Vec<u8>) {
@@ -326,27 +361,10 @@ impl Emu {
         }
     }
 
-    pub fn display(&self) {
-        print!("\x1B[1;1H");
-
-        // 上下の枠
-        println!("┌{}┐", "─".repeat(SCREEN_WIDTH * 2));
-
-        for y in 0..SCREEN_HEIGHT {
-            // print!("{:2}: │", y);
-            print!("|");
-            for x in 0..SCREEN_WIDTH {
-                let index = y * SCREEN_WIDTH + x;
-                if self.screen[index] {
-                    print!("██");
-                } else {
-                    print!("  ");
-                }
-            }
-            println!("│");
+    pub fn reset_keys(&mut self) {
+        for i in 0..NUM_KEYS {
+            self.keys[i] = false;
         }
-
-        println!("└{}┘", "─".repeat(SCREEN_WIDTH * 2));
     }
 
     fn screen_clear(&mut self) {
